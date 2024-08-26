@@ -1,0 +1,109 @@
+version: '3.8'
+
+networks:
+  monitoring:
+    driver: bridge
+
+volumes:
+  grafana-data:
+    driver: local
+
+services:
+
+  notes-app:
+    build:
+      context: ./django-notes-app
+    ports:
+      - "8000:8000"
+    container_name: "notes-app"
+    networks:
+      - monitoring
+
+  cadvisor:
+    image: gcr.io/cadvisor/cadvisor:latest
+    container_name: cadvisor
+    ports:
+    - 8080:8080
+    volumes:
+    - /:/rootfs:ro
+    - /var/run:/var/run:rw
+    - /sys:/sys:ro
+    - /var/lib/docker/:/var/lib/docker:ro
+    networks:
+      - monitoring
+    depends_on:
+    - redis
+
+  redis:
+    image: redis:latest
+    container_name: redis
+    ports:
+    - 6379:6379
+    networks:
+      - monitoring
+
+  prometheus:
+    image: prom/prometheus:latest
+    container_name: prometheus
+    ports:
+    - 9090:9090
+    command:
+    - --config.file=/etc/prometheus/prometheus.yml
+    volumes:
+    - ./prometheus.yml:/etc/prometheus/prometheus.yml:ro
+    networks:
+      - monitoring
+    depends_on:
+    - cadvisor
+
+  node-exporter:
+    image: prom/node-exporter:latest
+    container_name: node-exporter
+    restart: unless-stopped
+    volumes:
+      - /proc:/host/proc:ro
+      - /sys:/host/sys:ro
+      - /:/rootfs:ro
+    command:
+      - '--path.procfs=/host/proc'
+      - '--path.rootfs=/rootfs'
+      - '--path.sysfs=/host/sys'
+      - '--collector.filesystem.mount-points-exclude=^/(sys|proc|dev|host|etc)($$|/)'
+    ports:
+    - 9100:9100
+    networks:
+      - monitoring
+
+  grafana:
+    image: grafana/grafana-enterprise
+    container_name: grafana
+    restart: unless-stopped
+    volumes:
+      - grafana-data:/var/lib/grafana
+    ports:
+     - '3000:3000'
+    networks:
+     - monitoring
+
+  loki:
+    image: grafana/loki:3.0.0                       # Specifies the Loki Docker image and version.
+    container_name: loki                            # Names the container for easier management.
+    volumes:
+      - ./loki-config.yml:/mnt/config/loki-config.yml # Mounts the Loki configuration file.
+    ports:
+      - "3100:3100"                                 # Maps port 3100 on the host to port 3100 in the container.
+    command: -config.file=/mnt/config/loki-config.yml # Runs Loki with the specified configuration file.
+    networks:
+     - monitoring
+
+  promtail:
+    image: grafana/promtail:3.0.0                   # Specifies the Promtail Docker image and version.
+    container_name: promtail                        # Names the container for easier management.
+    volumes:
+      - ./promtail-config.yml:/mnt/config/promtail-config.yml # Mounts the Promtail configuration file.
+      - /var/log:/var/log                           # Mounts the host's log directory.
+    networks:
+     - monitoring
+    depends_on:
+     - loki                                       # Ensures Promtail starts after Loki.
+    command: -config.file=/mnt/config/promtail-config.yml # Runs Promtail with the specified configuration file.
